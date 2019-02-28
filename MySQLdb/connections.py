@@ -98,8 +98,12 @@ class Connection(_mysql.connection):
             (mysql_ssl_set()).  If this is set, and the client does not
             support SSL, NotSupportedError will be raised.
 
-        :param bool local_infile:
-            enables LOAD LOCAL INFILE; zero disables
+        :param dict/bool local_infile:
+            enables LOAD DATA LOCAL INFILE
+            If False or None (disabled)
+            If True, enabled with default file based implementation
+            If dict, from filename, return object with read method
+            that returns the bytes as if coming from a file.
 
         :param bool autocommit:
             If False (default), autocommit is disabled.

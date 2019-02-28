@@ -372,6 +372,38 @@ static int _mysql_ResultObject_clear(_mysql_ResultObject *self)
     return 0;
 }
 
+/* functions implementing the interfaces  https://dev.mysql.com/doc/refman/5.7/en/mysql-set-local-infile-handler.html */
+static int _mysql_local_infile_init(void **ptr, const char *filename, void *userdata)
+{
+    PyObject *dict = (PyObject *) userdata;
+    PyObject *myFunction = PyObject_GetAttrString(dict,"__getitem__");
+    PyObject *args = PyTuple_Pack(1, PyUnicode_FromString(filename));
+    *ptr = PyObject_CallObject(myFunction, args);
+}
+
+int _mysql_local_infile_read(void *ptr, char *buf, unsigned int buf_len)
+{
+    PyObject *o = (PyObject *) ptr;
+    PyObject *myFunction = PyObject_GetAttrString(dict, "read");
+    PyObject *args = PyTuple_Pack(1, PyLong_FromLong(buf_len));
+    PyObject *ret = PyObject_CallObject(myFunction, args);
+
+    if (PyByteArray_Check(ret)) {
+        int size = PyByteArray_Size(ret);
+        memcpy(buf, PyByteArray_AsString(ret), size);
+        return size;
+    }
+    return -1;
+}
+
+static void _mysql_local_infile_end(void *ptr)
+{
+}
+
+static int _mysql_local_infile_error(void *ptr, char *error_msg, unsigned int error_msg_len)
+{
+}
+
 static int
 _mysql_ConnectionObject_Initialize(
     _mysql_ConnectionObject *self,
@@ -401,7 +433,8 @@ _mysql_ConnectionObject_Initialize(
     int connect_timeout = 0;
     int read_timeout = 0;
     int write_timeout = 0;
-    int compress = -1, named_pipe = -1, local_infile = -1;
+    int compress = -1, named_pipe = -1;
+    PyObject *local_infile = NULL;
     char *init_command=NULL,
          *read_default_file=NULL,
          *read_default_group=NULL;
@@ -410,7 +443,7 @@ _mysql_ConnectionObject_Initialize(
     self->open = 0;
 
     if (!PyArg_ParseTupleAndKeywords(args, kwargs,
-                "|ssssisOiiisssiOiii:connect",
+                "|ssssisOiiisssiOOii:connect",
                 kwlist,
                 &host, &user, &passwd, &db,
                 &port, &unix_socket, &conv,
@@ -475,8 +508,15 @@ _mysql_ConnectionObject_Initialize(
     if (read_default_group != NULL)
         mysql_options(&(self->connection), MYSQL_READ_DEFAULT_GROUP, read_default_group);
 
-    if (local_infile != -1)
-        mysql_options(&(self->connection), MYSQL_OPT_LOCAL_INFILE, (char *) &local_infile);
+    if (PyObject_IsTrue(local_infile)) {
+        char local_infile_true = 1;
+        mysql_options(&(self->connection), MYSQL_OPT_LOCAL_INFILE, &local_infile_true);
+        if (PyObject_HasAttrString(local_infile, "__getitem__")) {
+            mysql_set_local_infile_handler(&(self->connection), _mysql_local_infile_init,
+                _mysql_local_infile_read, _mysql_local_infile_end, _mysql_local_infile_error,
+                local_infile);
+        }
+    }
 
     if (ssl) {
         mysql_ssl_set(&(self->connection), key, cert, ca, capath, cipher);
@@ -570,7 +610,7 @@ client_flag\n\
   client flags from MySQLdb.constants.CLIENT\n\
 \n\
 load_infile\n\
-  int, non-zero enables LOAD LOCAL INFILE, zero disables\n\
+  bool/dict, non-False enables LOAD LOCAL INFILE, True enabled, dict is local handler\n\
 \n\
 ";
 
